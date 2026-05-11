@@ -1,3 +1,5 @@
+mod proxy;
+
 use anyhow::Result;
 
 #[derive(Debug, Clone)]
