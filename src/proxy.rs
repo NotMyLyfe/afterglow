@@ -6,11 +6,11 @@ use futures::stream;
 
 use pgwire::api::query::SimpleQueryHandler;
 use pgwire::api::results::{DataRowEncoder, FieldFormat, FieldInfo, QueryResponse, Response};
-use pgwire::api::{ClientInfo, PgWireServerHandlers};
+use pgwire::api::{ClientInfo, PgWireServerHandlers, Type};
 use pgwire::error::PgWireResult;
+use pgwire::tokio::process_socket;
 
 use tokio::net::TcpListener;
-use tokio_postgres::types::Type;
 
 use std::sync::Arc;
 
@@ -22,9 +22,20 @@ pub async fn run(config: Config) -> Result<()> {
         config.listen_addr
     );
 
+    let handler = Arc::new(Handler {
+        query_handler: Arc::new(EchoQueryHandler),
+    });
+
     loop {
         let (socket, addr) = listener.accept().await?;
         tracing::debug!(?addr, "Accepted connection from {}", addr);
+
+        let handler = handler.clone();
+        tokio::spawn(async move {
+            if let Err(e) = process_socket(socket, None, handler).await {
+                tracing::error!(error = %e, "Error processing connection from {}", addr);
+            }
+        });
     }
 }
 
