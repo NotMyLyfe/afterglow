@@ -16,6 +16,7 @@ tracing-subscriber = { version = "0.3", features = [
     "fmt",
 ] }
 futures = "0.3"
+tokio-postgres = "0.7.17"
 
 [[bin]]
 name = "afterglow"
