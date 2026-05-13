@@ -17,6 +17,8 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 futures = "0.3"
 tokio-postgres = "0.7.17"
+deadpool-postgres = "0.14.1"
+pg_query = "6.1.1"
 
 [[bin]]
 name = "afterglow"
