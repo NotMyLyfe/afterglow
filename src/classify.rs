@@ -251,4 +251,65 @@ mod tests {
     fn empty_is_unknown() {
         assert_eq!(kind(""), QueryKind::Unknown);
     }
+
+    // --- CTEs ---
+    #[test]
+    fn read_only_cte_is_read() {
+        assert_eq!(
+            kind("WITH x AS (SELECT 1) SELECT * FROM x"),
+            QueryKind::Read
+        );
+    }
+
+    #[test]
+    fn multiple_read_ctes_is_read() {
+        assert_eq!(
+            kind("WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b"),
+            QueryKind::Read
+        );
+    }
+
+    #[test]
+    fn cte_with_insert_is_write() {
+        assert_eq!(
+            kind("WITH x AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM x"),
+            QueryKind::Write
+        );
+    }
+
+    #[test]
+    fn cte_with_update_is_write() {
+        assert_eq!(
+            kind("WITH x AS (UPDATE t SET a = 1 RETURNING id) SELECT * FROM x"),
+            QueryKind::Write
+        );
+    }
+
+    #[test]
+    fn cte_with_delete_is_write() {
+        assert_eq!(
+            kind("WITH x AS (DELETE FROM t WHERE id = 1 RETURNING id) SELECT * FROM x"),
+            QueryKind::Write
+        );
+    }
+
+    #[test]
+    fn mixed_ctes_one_write_is_write() {
+        assert_eq!(
+            kind(
+                "WITH a AS (SELECT 1), b AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM a, b"
+            ),
+            QueryKind::Write
+        );
+    }
+
+    #[test]
+    fn nested_cte_with_inner_write_is_write() {
+        assert_eq!(
+            kind(
+                "WITH a AS (WITH b AS (INSERT INTO t VALUES (1) RETURNING id) SELECT * FROM b) SELECT * FROM a"
+            ),
+            QueryKind::Write
+        );
+    }
 }
