@@ -100,13 +100,13 @@ fn classification_priority(a: &QueryKind, b: &QueryKind) -> QueryKind {
 }
 
 pub fn classify(query: &str) -> QueryKind {
-    let result = parse(query);
-
-    if result.is_err() {
-        return QueryKind::Unknown;
-    }
-
-    let result = result.unwrap();
+    let result = match parse(query) {
+        Ok(res) => res,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to parse query for classification: {}", query);
+            return QueryKind::Unknown;
+        }
+    };
 
     let raw_stmts = result.protobuf.stmts;
 
