@@ -45,7 +45,7 @@ fn classify_node(node: &NodeEnum) -> QueryKind {
                 QueryKind::Write
             } else if let Some(with) = &stmt.with_clause {
                 if with_clause_has_write(with) {
-                    QueryKind::Write // If any CTE is a write, classify the whole statement as Write
+                    QueryKind::Write
                 } else {
                     QueryKind::Read
                 }
@@ -95,7 +95,6 @@ fn classification_priority(a: &QueryKind, b: &QueryKind) -> QueryKind {
         (Utility, _) | (_, Utility) => Utility,
         (Unknown, _) | (_, Unknown) => Unknown,
         (Read, Read) => Read,
-        _ => Unknown, // Default to Unknown for any unhandled combinations
     }
 }
 
