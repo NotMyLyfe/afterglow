@@ -5,6 +5,7 @@ mod proxy;
 mod session;
 
 use anyhow::Result;
+use backend::BackendPool;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -25,6 +26,8 @@ async fn main() -> Result<()> {
 
     let config = Config::from_env()?;
     tracing::debug!(?config, "Loaded configuration: {:?}", config);
+    let pool = BackendPool::new(&config)?;
+    tracing::info!("Initialized backend connection pools");
 
     proxy::run(config).await
 }
