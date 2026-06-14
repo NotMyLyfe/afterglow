@@ -2,6 +2,7 @@ mod backend;
 mod classify;
 mod lsn;
 mod proxy;
+mod router;
 mod session;
 
 use anyhow::Result;
