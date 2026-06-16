@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let pool = BackendPool::new(&config)?;
     tracing::info!("Initialized backend connection pools");
 
-    proxy::run(config).await
+    proxy::run(config, pool).await
 }
 
 impl Config {
