@@ -25,6 +25,14 @@ impl Lsn {
         })
     }
 
+    pub fn as_u64(&self) -> u64 {
+        self.value
+    }
+
+    pub fn from_u64(value: u64) -> Self {
+        Self { value }
+    }
+
     pub fn bytes_since(&self, other: Lsn) -> u64 {
         self.value.saturating_sub(other.value)
     }

@@ -1,10 +1,12 @@
 use crate::BackendPool;
 use crate::Config;
+use crate::lsn::Lsn;
 use crate::router;
 use crate::session::SessionState;
 
 use anyhow::Result;
 
+use base64::Engine;
 use futures::stream;
 
 use pgwire::api::query::SimpleQueryHandler;
@@ -19,11 +21,20 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_postgres::SimpleQueryMessage;
 
+use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::AtomicU32;
 
 const SESSION_ID_KEY: &str = "session_id";
+static GET_TOKEN_QUERY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*SELECT\s+afterglow_get_token\s*\(\s*\)\s*;?\s*$").unwrap()
+});
+static SET_TOKEN_QUERY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*SELECT\s+afterglow_set_token\s*\(\s*([A-Za-z0-9+/=]*)\s*\)\s*;?\s*$")
+        .unwrap()
+});
 
 pub async fn run(config: Config, pool: BackendPool) -> Result<()> {
     let listener: TcpListener = TcpListener::bind(&config.listen_addr).await?;
@@ -98,12 +109,76 @@ impl SimpleQueryHandler for QueryHandler {
                 format!("session-{}", id)
             });
 
+        if GET_TOKEN_QUERY_REGEX.is_match(query) {
+            // This could be written more cleanly, but for now, we just want to make sure the session state is locked while we get the token
+            // Will be optimized later when we have a better idea of how to have finer-grained locking for session state
+            let mut session = self.session.lock().await;
+            let session_state = session
+                .entry(session_id.clone())
+                .or_insert_with(SessionState::default);
+
+            // TODO: tokens shouldn't only be base64-encoded, add HMAC or something later to make sure tokens can't be forged by clients
+            let last_lsn = session_state.last_write_lsn();
+
+            let token = match last_lsn {
+                Some(lsn) => {
+                    base64::engine::general_purpose::STANDARD.encode(lsn.as_u64().to_be_bytes())
+                }
+                None => String::new(),
+            };
+
+            let fields = Arc::new(vec![FieldInfo::new(
+                "token".to_string(),
+                None,
+                None,
+                Type::TEXT,
+                FieldFormat::Text,
+            )]);
+
+            let mut encoder = DataRowEncoder::new(fields.clone());
+            encoder.encode_field(&Some(token.as_str()))?;
+
+            let row = encoder.take_row();
+            let response = Response::Query(QueryResponse::new(fields, stream::iter(vec![Ok(row)])));
+
+            return Ok(vec![response]);
+        }
+
+        if SET_TOKEN_QUERY_REGEX.is_match(query) {
+            let captures = SET_TOKEN_QUERY_REGEX.captures(query).unwrap();
+            let token = captures.get(1).map(|m| m.as_str()).unwrap_or("");
+
+            let mut session = self.session.lock().await;
+
+            // If there isn't a token - do nothing
+            if !token.is_empty() {
+                let session_state = session
+                    .entry(session_id.clone())
+                    .or_insert_with(SessionState::default);
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(token)
+                    .map_err(|e| to_pg_wire_error(e.into()))?;
+                let bytes: [u8; 8] = decoded.as_slice().try_into().map_err(|e| {
+                    to_pg_wire_error(anyhow::anyhow!("Invalid token length: {}", e))
+                })?;
+                let lsn_val = u64::from_be_bytes(bytes);
+                let lsn = Lsn::from_u64(lsn_val);
+                session_state.record_write(lsn);
+            }
+
+            return Ok(vec![Response::Execution(pgwire::api::results::Tag::new(
+                "OK",
+            ))]);
+        }
+
         let result = {
             let mut session = self.session.lock().await;
             let session_state = session
                 .entry(session_id.clone())
                 .or_insert_with(SessionState::default);
 
+            // TODO: we shouldn't pass the whole session state to the router; but we also need to make sure
+            // the current session state is locked for the duration of the query execution
             router::handle(query, session_state, self.pool.as_ref())
                 .await
                 .map_err(to_pg_wire_error)?

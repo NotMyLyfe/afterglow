@@ -19,6 +19,8 @@ futures = "0.3"
 tokio-postgres = "0.7.17"
 deadpool-postgres = "0.14.1"
 pg_query = "6.1.1"
+regex = "1.12.4"
+base64 = "0.22.1"
 
 [[bin]]
 name = "afterglow"
