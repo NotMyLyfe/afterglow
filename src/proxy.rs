@@ -185,23 +185,16 @@ impl SimpleQueryHandler for QueryHandler {
         };
 
         let mut responses = Vec::new();
-        let mut fields = None;
-        let mut row_encoder = None;
+        let mut current: Option<(Arc<Vec<FieldInfo>>, DataRowEncoder)> = None;
         let mut data_rows = Vec::new();
 
         for message in result {
             match message {
                 SimpleQueryMessage::CommandComplete(_num) => {
-                    if fields.is_some() {
+                    if let Some((fields, _encoder)) = current.take() {
                         // If we have seen Row messages, we need to finalize the QueryResponse with the collected fields and data rows
-                        let fields_arc = fields.take().unwrap();
-                        let row_stream = stream::iter(data_rows.into_iter());
-                        responses.push(Response::Query(QueryResponse::new(fields_arc, row_stream)));
-
-                        // Reset the row encoder and data rows for the next command
-                        fields = None;
-                        row_encoder = None;
-                        data_rows = Vec::new();
+                        let row_stream = stream::iter(std::mem::take(&mut data_rows));
+                        responses.push(Response::Query(QueryResponse::new(fields, row_stream)));
                     } else {
                         // If we haven't seen any Row messages yet, we can just return a CommandComplete response without fields
                         // TODO: We might want to return a more specific tag based on the command type (e.g., "INSERT 0 1" for an insert that affected 1 row)
@@ -209,9 +202,9 @@ impl SimpleQueryHandler for QueryHandler {
                     }
                 }
                 SimpleQueryMessage::Row(row) => {
-                    if fields.is_none() {
+                    if current.is_none() {
                         // If we haven't seen a Row message before, we need to initialize the fields and row encoder
-                        fields = Some(Arc::new(
+                        let fields: Arc<Vec<FieldInfo>> = Arc::new(
                             row.columns()
                                 .iter()
                                 .map(|col| {
@@ -224,11 +217,11 @@ impl SimpleQueryHandler for QueryHandler {
                                     )
                                 })
                                 .collect(),
-                        ));
-                        row_encoder = Some(DataRowEncoder::new(fields.clone().unwrap()));
+                        );
+                        current = Some((fields.clone(), DataRowEncoder::new(fields.clone())));
                     }
 
-                    if let Some(encoder) = &mut row_encoder {
+                    if let Some((_fields, encoder)) = &mut current {
                         // Iterate through all the columns in the current row and encode them using the DataRowEncoder
                         for col in row.columns() {
                             let value: Option<&str> = row.get(col.name());
