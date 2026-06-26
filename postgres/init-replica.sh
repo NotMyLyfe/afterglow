@@ -25,6 +25,6 @@ grep -q "^hot_standby" "$DATA_DIR/postgresql.auto.conf" 2>/dev/null || \
     echo "hot_standby = on" >> "$DATA_DIR/postgresql.auto.conf"
 
 grep -q "^recovery_min_apply_delay" "$DATA_DIR/postgresql.auto.conf" 2>/dev/null || \
-    echo "recovery_min_apply_delay = '100ms'" >> "$DATA_DIR/postgresql.auto.conf"
+    echo "recovery_min_apply_delay = '${REPLICA_APPLY_DELAY}'" >> "$DATA_DIR/postgresql.auto.conf"
 
 exec docker-entrypoint.sh postgres
