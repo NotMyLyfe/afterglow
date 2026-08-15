@@ -1,6 +1,6 @@
 use crate::backend::BackendPool;
 use crate::classify::{QueryKind, TxAction, classify};
-use crate::lsn::{self, Lsn};
+use crate::lsn::Lsn;
 use crate::session::SessionState;
 
 use anyhow::Result;
