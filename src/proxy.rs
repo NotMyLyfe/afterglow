@@ -54,6 +54,20 @@ pub async fn run(config: Config, pool: BackendPool) -> Result<()> {
         }),
     });
 
+    tokio::spawn(async move {
+        let metrics_app =
+            axum::Router::new().route("/metrics", axum::routing::get(metrics::metrics_handler));
+        match TcpListener::bind("0.0.0.0:9090").await {
+            Ok(listener) => {
+                tracing::info!("Metrics server listening on 0.0.0.0:9090");
+                if let Err(e) = axum::serve(listener, metrics_app).await {
+                    tracing::error!(error = %e, "Metrics server failed");
+                }
+            }
+            Err(e) => tracing::error!(error = %e, "Failed to bind metrics server"),
+        }
+    });
+
     loop {
         let (socket, addr) = listener.accept().await?;
         tracing::debug!(?addr, "Accepted connection from {}", addr);
