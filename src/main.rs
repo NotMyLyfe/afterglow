@@ -1,6 +1,7 @@
 mod backend;
 mod classify;
 mod lsn;
+mod metrics;
 mod proxy;
 mod router;
 mod session;

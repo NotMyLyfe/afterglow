@@ -1,6 +1,7 @@
 use crate::BackendPool;
 use crate::Config;
 use crate::lsn::Lsn;
+use crate::metrics;
 use crate::router;
 use crate::session::SessionState;
 
@@ -141,6 +142,8 @@ impl SimpleQueryHandler for QueryHandler {
             let row = encoder.take_row();
             let response = Response::Query(QueryResponse::new(fields, stream::iter(vec![Ok(row)])));
 
+            metrics::GET_TOKEN.inc();
+
             return Ok(vec![response]);
         }
 
@@ -165,6 +168,8 @@ impl SimpleQueryHandler for QueryHandler {
                 let lsn = Lsn::from_u64(lsn_val);
                 session_state.record_write(lsn);
             }
+
+            metrics::SET_TOKEN.inc();
 
             return Ok(vec![Response::Execution(pgwire::api::results::Tag::new(
                 "OK",

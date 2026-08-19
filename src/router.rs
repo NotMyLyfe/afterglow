@@ -1,6 +1,7 @@
 use crate::backend::BackendPool;
 use crate::classify::{QueryKind, TxAction, classify};
 use crate::lsn::Lsn;
+use crate::metrics;
 use crate::session::SessionState;
 
 use anyhow::Result;
@@ -30,6 +31,8 @@ async fn execute_write(
     let lsn = Lsn::parse(&lsn_str)?;
 
     session.record_write(lsn);
+
+    metrics::WRITES.inc();
 
     Ok(query_rows)
 }
@@ -87,18 +90,28 @@ async fn route_read(
 ) -> Result<Vec<SimpleQueryMessage>> {
     let replica = pool.replica().await?;
     match session.last_write_lsn() {
-        None => Ok(replica.simple_query(query).await?),
+        None => {
+            metrics::READS.with_label_values(&["no_lsn"]).inc();
+            Ok(replica.simple_query(query).await?)
+        }
         Some(lsn) => match wait_for_replica(&replica, lsn, REPLICA_WAIT_TIMEOUT).await {
             Ok(true) => {
+                metrics::READS.with_label_values(&["replica"]).inc();
                 tracing::debug!("served read from replica");
                 Ok(replica.simple_query(query).await?)
             }
             Ok(false) => {
+                metrics::READS
+                    .with_label_values(&["primary_fallback"])
+                    .inc();
                 tracing::debug!("replica lagging, falling back to primary");
                 let primary = pool.primary().await?;
                 Ok(primary.simple_query(query).await?)
             }
             Err(e) => {
+                metrics::READS
+                    .with_label_values(&["primary_fallback"])
+                    .inc();
                 tracing::warn!(error = %e, "replica poll error, falling back to primary");
                 let primary = pool.primary().await?;
                 Ok(primary.simple_query(query).await?)
