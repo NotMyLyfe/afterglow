@@ -8,7 +8,7 @@ pub struct SessionState {
 
 impl SessionState {
     pub fn record_write(&mut self, lsn: Lsn) {
-        if self.last_write_lsn.map_or(true, |current| lsn > current) {
+        if self.last_write_lsn.is_none_or(|current| lsn > current) {
             self.last_write_lsn = Some(lsn);
         }
     }

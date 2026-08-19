@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting Afterglow...");
 
-    let config = Config::from_env()?;
+    let config = Config::from_env();
     tracing::debug!(?config, "Loaded configuration: {:?}", config);
     let pool = BackendPool::new(&config)?;
     tracing::info!("Initialized backend connection pools");
@@ -35,14 +35,14 @@ async fn main() -> Result<()> {
 }
 
 impl Config {
-    fn from_env() -> Result<Self> {
-        Ok(Self {
+    fn from_env() -> Config {
+        Self {
             listen_addr: std::env::var("LISTEN_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:6432".to_string()),
             primary_url: std::env::var("PRIMARY_URL")
                 .unwrap_or_else(|_| "postgres://localhost:5432/postgres".to_string()),
             replica_url: std::env::var("REPLICA_URL")
                 .unwrap_or_else(|_| "postgres://localhost:5432/postgres".to_string()),
-        })
+        }
     }
 }

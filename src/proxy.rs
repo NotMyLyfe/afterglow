@@ -29,12 +29,17 @@ use std::sync::LazyLock;
 use std::sync::atomic::AtomicU32;
 
 const SESSION_ID_KEY: &str = "session_id";
+
+#[allow(clippy::expect_used)]
 static GET_TOKEN_QUERY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*SELECT\s+afterglow_get_token\s*\(\s*\)\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*SELECT\s+afterglow_get_token\s*\(\s*\)\s*;?\s*$")
+        .expect("Failed to compile GET_TOKEN_QUERY_REGEX")
 });
+
+#[allow(clippy::expect_used)]
 static SET_TOKEN_QUERY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*SELECT\s+afterglow_set_token\s*\(\s*([A-Za-z0-9+/=]*)\s*\)\s*;?\s*$")
-        .unwrap()
+        .expect("Failed to compile SET_TOKEN_QUERY_REGEX")
 });
 
 pub async fn run(config: Config, pool: BackendPool) -> Result<()> {
@@ -101,6 +106,7 @@ struct QueryHandler {
     id_counter: AtomicU32,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn to_pg_wire_error(e: anyhow::Error) -> PgWireError {
     let code = "XX000"; // Internal Error
     let message = e.to_string();
@@ -121,7 +127,7 @@ impl SimpleQueryHandler for QueryHandler {
                 let id = self
                     .id_counter
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                format!("session-{}", id)
+                format!("session-{id}")
             });
 
         if GET_TOKEN_QUERY_REGEX.is_match(query) {
@@ -162,8 +168,10 @@ impl SimpleQueryHandler for QueryHandler {
         }
 
         if SET_TOKEN_QUERY_REGEX.is_match(query) {
-            let captures = SET_TOKEN_QUERY_REGEX.captures(query).unwrap();
-            let token = captures.get(1).map(|m| m.as_str()).unwrap_or("");
+            let captures = SET_TOKEN_QUERY_REGEX
+                .captures(query)
+                .ok_or(to_pg_wire_error(anyhow::anyhow!("Failed to capture token")))?;
+            let token = captures.get(1).map_or("", |m| m.as_str());
 
             let mut session = self.session.lock().await;
 
@@ -175,9 +183,10 @@ impl SimpleQueryHandler for QueryHandler {
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(token)
                     .map_err(|e| to_pg_wire_error(e.into()))?;
-                let bytes: [u8; 8] = decoded.as_slice().try_into().map_err(|e| {
-                    to_pg_wire_error(anyhow::anyhow!("Invalid token length: {}", e))
-                })?;
+                let bytes: [u8; 8] = decoded
+                    .as_slice()
+                    .try_into()
+                    .map_err(|e| to_pg_wire_error(anyhow::anyhow!("Invalid token length: {e}")))?;
                 let lsn_val = u64::from_be_bytes(bytes);
                 let lsn = Lsn::from_u64(lsn_val);
                 session_state.record_write(lsn);

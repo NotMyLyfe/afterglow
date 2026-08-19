@@ -23,10 +23,10 @@ pub enum QueryKind {
 
 fn with_clause_has_write(with: &WithClause) -> bool {
     for cte in &with.ctes {
-        if let Some(node) = cte.node.as_ref() {
-            if classify_node(node) == QueryKind::Write {
-                return true;
-            }
+        if let Some(node) = cte.node.as_ref()
+            && classify_node(node) == QueryKind::Write
+        {
+            return true;
         }
     }
     false
@@ -53,6 +53,8 @@ fn classify_node(node: &NodeEnum) -> QueryKind {
                 QueryKind::Read
             }
         }
+        // TODO: Handle InsertStmt/UpdateStmt/DeleteStmt differently than CreateStmt/AlterTableStmt/DropStmt, as the former are DML and the latter are DDL
+        #[allow(clippy::match_same_arms)]
         NodeEnum::InsertStmt(_) | NodeEnum::UpdateStmt(_) | NodeEnum::DeleteStmt(_) => {
             QueryKind::Write
         }
@@ -73,8 +75,8 @@ fn classify_node(node: &NodeEnum) -> QueryKind {
     }
 }
 
-fn classification_priority(a: &QueryKind, b: &QueryKind) -> QueryKind {
-    use QueryKind::*;
+fn classification_priority(a: QueryKind, b: QueryKind) -> QueryKind {
+    use QueryKind::{Read, Transaction, Unknown, Utility, Write};
 
     // Write > Transaction > Utility > Unknown > Read
     match (a, b) {
@@ -85,13 +87,13 @@ fn classification_priority(a: &QueryKind, b: &QueryKind) -> QueryKind {
                 action_a,
                 TxAction::Begin | TxAction::Commit | TxAction::Rollback
             ) {
-                *action_a
+                action_a
             } else {
-                *action_b
+                action_b
             },
         ),
-        (Transaction(_), _) => *a,
-        (_, Transaction(_)) => *b,
+        (Transaction(_), _) => a,
+        (_, Transaction(_)) => b,
         (Utility, _) | (_, Utility) => Utility,
         (Unknown, _) | (_, Unknown) => Unknown,
         (Read, Read) => Read,
@@ -119,9 +121,9 @@ pub fn classify(query: &str) -> QueryKind {
             stmt.stmt
                 .as_ref()
                 .and_then(|s| s.node.as_ref())
-                .map_or(QueryKind::Write, |node| classify_node(node))
+                .map_or(QueryKind::Write, classify_node)
         })
-        .reduce(|acc, kind| classification_priority(&acc, &kind))
+        .reduce(classification_priority)
         .unwrap_or(QueryKind::Unknown)
 }
 

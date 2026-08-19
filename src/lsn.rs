@@ -13,19 +13,19 @@ impl Lsn {
     pub fn parse(s: &str) -> Result<Self> {
         let (high_str, low_str) = s
             .split_once('/')
-            .ok_or_else(|| anyhow::anyhow!("Invalid LSN format '{}': missing '/'", s))?;
+            .ok_or_else(|| anyhow::anyhow!("Invalid LSN format {s}: missing '/'"))?;
 
         let high = u32::from_str_radix(high_str, 16)
-            .map_err(|e| anyhow::anyhow!("Invalid LSN high part '{}': {}", high_str, e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid LSN high part '{high_str}': {e}"))?;
         let low = u32::from_str_radix(low_str, 16)
-            .map_err(|e| anyhow::anyhow!("Invalid LSN low part '{}': {}", low_str, e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid LSN low part '{low_str}': {e}"))?;
 
         Ok(Self {
             value: (u64::from(high) << 32) | u64::from(low),
         })
     }
 
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u64(self) -> u64 {
         self.value
     }
 
@@ -33,7 +33,8 @@ impl Lsn {
         Self { value }
     }
 
-    pub fn bytes_since(&self, other: Lsn) -> u64 {
+    #[allow(dead_code)]
+    pub fn bytes_since(self, other: Lsn) -> u64 {
         self.value.saturating_sub(other.value)
     }
 }
@@ -41,8 +42,9 @@ impl Lsn {
 impl Display for Lsn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let high = (self.value >> 32) as u32;
+        #[allow(clippy::cast_possible_truncation)]
         let low = self.value as u32;
-        write!(f, "{:X}/{:X}", high, low)
+        write!(f, "{high:X}/{low:X}")
     }
 }
 
@@ -53,7 +55,7 @@ mod tests {
     #[test]
     fn parse_basic() {
         let lsn = Lsn::parse("0/16B6310").unwrap();
-        assert_eq!(format!("{}", lsn), "0/16B6310");
+        assert_eq!(format!("{lsn}"), "0/16B6310");
     }
 
     #[test]
@@ -70,7 +72,7 @@ mod tests {
         let cases = ["0/0", "0/FFFFFFFF", "1/0", "FF/FFFFFFFF"];
         for s in cases {
             let lsn = Lsn::parse(s).unwrap();
-            assert_eq!(format!("{}", lsn), s);
+            assert_eq!(format!("{lsn}"), s);
         }
     }
 
