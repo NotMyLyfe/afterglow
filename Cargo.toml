@@ -23,6 +23,7 @@ regex = "1.12.4"
 base64 = "0.22.1"
 prometheus = "0.14.0"
 axum = "0.8.9"
+uuid = { version = "1.26.0", features = ["std", "v7"] }
 
 [[bin]]
 name = "afterglow"
