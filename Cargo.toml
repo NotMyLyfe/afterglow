@@ -24,6 +24,7 @@ base64 = "0.22.1"
 prometheus = "0.14.0"
 axum = "0.8.9"
 uuid = { version = "1.26.0", features = ["std", "v7"] }
+reqwest = "0.13.4"
 
 [[bin]]
 name = "afterglow"
