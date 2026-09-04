@@ -2,7 +2,11 @@ use anyhow::Result;
 use tokio_postgres::NoTls;
 use uuid::Uuid;
 
-const ITERATIONS: usize = 1000;
+use std::collections::HashMap;
+
+const ITERATIONS: usize = 10000;
+const LATENCIES: [u64; 10] = [0, 1, 5, 10, 25, 50, 100, 200, 500, 1000];
+const METRICS_URL: &str = "http://localhost:9090/metrics";
 
 struct BenchTable {
     name: String,
@@ -85,30 +89,171 @@ async fn main() -> Result<()> {
 
     let bench_table = BenchTable::create(&primary_client, &replica_client).await?;
 
-    // Scenario 1: Write to primary, read from primary
-    let primary_stale_reads =
-        run_workload(&primary_client, &primary_client, &bench_table, ITERATIONS).await?;
-    println!(
-        "Scenario 1: Write to primary, read from primary - Stale reads: {primary_stale_reads} / {ITERATIONS}"
-    );
+    for &latency in &LATENCIES {
+        println!("Running benchmark with latency: {latency} ms");
+        let (results, lookup_counts) = run_latency_workload(
+            &primary_client,
+            &replica_client,
+            &proxy_client,
+            &bench_table,
+            latency,
+            ITERATIONS,
+        )
+        .await?;
 
-    // Scenario 2: Write to primary, read from replica
-    let replica_stale_reads =
-        run_workload(&primary_client, &replica_client, &bench_table, ITERATIONS).await?;
-    println!(
-        "Scenario 2: Write to primary, read from replica - Stale reads: {replica_stale_reads} / {ITERATIONS}"
-    );
+        println!("Results for latency {latency} ms:");
+        for result in results {
+            println!(
+                "Write Route: {}, Read Route: {}, Stale Reads: {}",
+                result.write_route, result.read_route, result.stale_reads
+            );
+        }
 
-    // Scenario 3: Write to proxy, read from proxy
-    let proxy_stale_reads =
-        run_workload(&proxy_client, &proxy_client, &bench_table, ITERATIONS).await?;
-    println!(
-        "Scenario 3: Write to proxy, read from proxy - Stale reads: {proxy_stale_reads} / {ITERATIONS}"
-    );
+        println!("Lookup counts for latency {latency} ms:");
+        for (route, count) in lookup_counts {
+            println!("Route: {route}, Count: {count}");
+        }
+    }
 
     bench_table.drop(&primary_client).await?;
 
     Ok(())
+}
+
+async fn get_current_latency(client: &tokio_postgres::Client) -> Result<String> {
+    let rows = client.simple_query("SHOW recovery_min_apply_delay").await?;
+
+    rows.iter()
+        .find_map(|msg| match msg {
+            tokio_postgres::SimpleQueryMessage::Row(row) => row
+                .get("recovery_min_apply_delay")
+                .map(std::string::ToString::to_string),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow::anyhow!("Failed to retrieve current latency"))
+}
+
+async fn get_lookup_counts(metrics_url: &str) -> Result<HashMap<String, usize>> {
+    let body = reqwest::get(metrics_url).await?.text().await?;
+
+    let mut counts = HashMap::new();
+    for line in body.lines() {
+        if !line.starts_with("afterglow_reads_total{route=\"") {
+            continue;
+        }
+
+        if let Some((route, count_str)) = line
+            .strip_prefix("afterglow_reads_total{route=\"")
+            .and_then(|s| s.split_once("\"} "))
+            && let Ok(count) = count_str.parse::<usize>()
+        {
+            counts.insert(route.to_string(), count);
+        }
+    }
+    Ok(counts)
+}
+
+struct LatencyWorkloadResult {
+    write_route: String,
+    read_route: String,
+    stale_reads: usize,
+}
+
+async fn run_latency_workload(
+    primary_client: &tokio_postgres::Client,
+    replica_client: &tokio_postgres::Client,
+    proxy_client: &tokio_postgres::Client,
+    bench_table: &BenchTable,
+    latency: u64,
+    iterations: usize,
+) -> Result<(Vec<LatencyWorkloadResult>, HashMap<String, usize>)> {
+    struct WorkloadOrder<'a> {
+        write_name: &'a str,
+        read_name: &'a str,
+        write_client: &'a tokio_postgres::Client,
+        read_client: &'a tokio_postgres::Client,
+    }
+
+    let workload_order = [
+        WorkloadOrder {
+            write_name: "primary",
+            read_name: "primary",
+            write_client: primary_client,
+            read_client: primary_client,
+        },
+        WorkloadOrder {
+            write_name: "primary",
+            read_name: "replica",
+            write_client: primary_client,
+            read_client: replica_client,
+        },
+        WorkloadOrder {
+            write_name: "proxy",
+            read_name: "proxy",
+            write_client: proxy_client,
+            read_client: proxy_client,
+        },
+    ];
+
+    // Remember the original latency
+    let original_latency = get_current_latency(replica_client).await?;
+
+    // Set the desired latency
+    let latency_str = latency.to_string();
+    replica_client
+        .simple_query(&format!(
+            "ALTER SYSTEM SET recovery_min_apply_delay = '{latency_str}'"
+        ))
+        .await?;
+    replica_client
+        .simple_query("SELECT pg_reload_conf()")
+        .await?;
+
+    // Get current lookup counts before running the workload
+    let prev_lookup_counts = get_lookup_counts(METRICS_URL).await?;
+
+    // Run the workload for each combination of write and read clients
+    let results = futures::future::join_all(workload_order.iter().map(|order| async move {
+        let stale_reads = run_workload(
+            order.write_client,
+            order.read_client,
+            bench_table,
+            iterations,
+        )
+        .await?;
+
+        Ok::<LatencyWorkloadResult, anyhow::Error>(LatencyWorkloadResult {
+            write_route: order.write_name.to_string(),
+            read_route: order.read_name.to_string(),
+            stale_reads,
+        })
+    }))
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()?;
+
+    let current_lookup_counts = get_lookup_counts(METRICS_URL).await?;
+
+    // Guaranteed to be monotonically increasing, so we can safely subtract the previous counts from the current counts to get the difference
+    let diff_lookup_counts: HashMap<String, usize> = current_lookup_counts
+        .iter()
+        .map(|(route, &current_count)| {
+            let prev_count = prev_lookup_counts.get(route).copied().unwrap_or(0);
+            (route.clone(), current_count.saturating_sub(prev_count))
+        })
+        .collect();
+
+    // Restore the original latency
+    replica_client
+        .simple_query(&format!(
+            "ALTER SYSTEM SET recovery_min_apply_delay = '{original_latency}'"
+        ))
+        .await?;
+    replica_client
+        .simple_query("SELECT pg_reload_conf()")
+        .await?;
+
+    Ok((results, diff_lookup_counts))
 }
 
 async fn run_workload(
